@@ -1,12 +1,19 @@
-# %%
+# %% tensorboard --logdir=runs
 import os
+
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 from transformer import Transformer  # this is the transformer.py file
 from utils import load_checkpoint, TextDataset, create_masks, save_checkpoint, is_valid_length, is_valid_tokens
+from torch.utils.tensorboard import SummaryWriter
+
+# Initialize TensorBoard writer
+writer = SummaryWriter(log_dir="runs/transformer_experiment")
 
 # Define a directory to save the checkpoints
 checkpoint_dir = "checkpoints"
@@ -72,6 +79,7 @@ Present_sentences = [Present_sentences[i] for i in valid_sentence_indicies]
 #%%
 Future_sentences[:3]
 # %%
+checkPoint_id = 400
 save_every_n_epochs = 100
 num_epochs = 1000
 
@@ -113,7 +121,35 @@ for batch_num, batch in enumerate(iterator):
     print(batch)
     if batch_num > 3:
         break
+
+
+def translate_old(eng_sentence):
+    eng_sentence = (eng_sentence,)
+    kn_sentence = ("",)
+    for word_counter in range(max_sequence_length):
+        encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
+            eng_sentence, kn_sentence, max_sequence_length)
+        predictions = transformer(eng_sentence,
+                                  kn_sentence,
+                                  encoder_self_attention_mask.to(device),
+                                  decoder_self_attention_mask.to(device),
+                                  decoder_cross_attention_mask.to(device),
+                                  enc_start_token=False,
+                                  enc_end_token=False,
+                                  dec_start_token=True,
+                                  dec_end_token=False)
+        next_token_prob_distribution = predictions[0][word_counter]
+        next_token_index = torch.argmax(next_token_prob_distribution).item()
+        next_token = index_to_Future[next_token_index]
+        kn_sentence = (kn_sentence[0] + next_token,)
+        if next_token == END_TOKEN:
+            break
+    return kn_sentence[0]
+
+
 #%%
+# TODO: Scheduler - Done
+# TODO: Tensor Board
 
 
 criterion = nn.CrossEntropyLoss(ignore_index=future_to_index[PADDING_TOKEN],
@@ -124,7 +160,13 @@ for params in transformer.parameters():
     if params.dim() > 1:
         nn.init.xavier_uniform_(params)
 
-optim = torch.optim.Adam(transformer.parameters(), lr=1e-4)
+initial_lr = 1e-4
+final_lr = 1e-6
+
+optim = torch.optim.Adam(transformer.parameters(), lr=initial_lr)
+# first restart after 5 epoch. Second after 10. Third after 20.
+scheduler = CosineAnnealingWarmRestarts(optim, T_0=5, T_mult=2, eta_min=final_lr)
+
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 # %%
 transformer.train()
@@ -132,12 +174,14 @@ transformer.to(device)
 total_loss = 0
 
 # try to load check point
-start_epoch, best_loss = load_checkpoint(transformer, optim, checkpoint_dir)
+start_epoch, best_loss = load_checkpoint(transformer, optim, checkpoint_dir,
+                                         filename="checkpoint" + str(checkPoint_id) + ".pth")
 
-for epoch in range(num_epochs):
+for epoch in range(start_epoch, num_epochs):
     print(f"Epoch {epoch}")
     iterator = iter(train_loader)
     epoch_loss = 0
+
     for batch_num, batch in enumerate(iterator):
         transformer.train()
         eng_batch, kn_batch = batch
@@ -160,13 +204,15 @@ for epoch in range(num_epochs):
             kn_predictions.view(-1, kn_vocab_size).to(device),
             labels.view(-1).to(device)
         ).to(device)
-        valid_indicies = torch.where(labels.view(-1) == future_to_index[PADDING_TOKEN], False, True)
-        loss = loss.sum() / valid_indicies.sum()
+        valid_indices = torch.where(labels.view(-1) == future_to_index[PADDING_TOKEN], False, True)
+        loss = loss.sum() / valid_indices.sum()
         loss.backward()
         optim.step()
         epoch_loss += loss.item()
         # train_losses.append(loss.item())
         sample_idx = np.random.randint(0, batch_size - 1)
+        # Log loss to TensorBoard
+        writer.add_scalar('Loss/Train', loss.item(), epoch * len(train_loader) + batch_num)
         if batch_num % 100 == 0:
             print(f"Iteration {batch_num} : {loss.item()}")
             print(f"Present: {eng_batch[sample_idx]}")
@@ -180,33 +226,26 @@ for epoch in range(num_epochs):
             print(f"Future Prediction : {predicted_sentence}")
 
             transformer.eval()
-            kn_sentence = ("",)
+            # kn_sentence = ("",)
             # eng_sentence = ("should we go to the mall?",)#405 763543
-            eng_sentence = ("405 763543",)
-            for word_counter in range(max_sequence_length):
-                encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
-                    eng_sentence, kn_sentence, max_sequence_length)
-                predictions = transformer(eng_sentence,
-                                          kn_sentence,
-                                          encoder_self_attention_mask.to(device),
-                                          decoder_self_attention_mask.to(device),
-                                          decoder_cross_attention_mask.to(device),
-                                          enc_start_token=False,
-                                          enc_end_token=False,
-                                          dec_start_token=True,
-                                          dec_end_token=False)
-                next_token_prob_distribution = predictions[0][word_counter]  # not actual probs
-                next_token_index = torch.argmax(next_token_prob_distribution).item()
-                next_token = index_to_Future[next_token_index]
-                kn_sentence = (kn_sentence[0] + next_token,)
-                if next_token == END_TOKEN:
-                    break
+            eng_sentence = "405 763543"  #("405 763543",)
+            kn_sentence = translate_old(eng_sentence)
 
             print(f"Evaluation translation (405 763543) : {kn_sentence}")
             print("-------------------------------------------")
+    # Log average loss per epoch
+    writer.add_scalar('Loss/Epoch', epoch_loss / len(train_loader), epoch)
+    # update LR
+    # scheduler.step()
+    # print("last learning rate :", scheduler.get_last_lr())
+    # writer.add_scalar('LRate/Epoch', scheduler.get_last_lr()[0], epoch)
     # Save a checkpoint at every N epochs
-    if epoch % save_every_n_epochs == 0:
-        save_checkpoint(transformer, optim, epoch, epoch_loss / len(train_loader), checkpoint_dir)
+    if epoch % save_every_n_epochs == 0 and epoch != start_epoch:
+        save_checkpoint(transformer, optim, epoch, epoch_loss / len(train_loader), checkpoint_dir,
+                        filename="checkpoint" + str(epoch) + ".pth")
+
+# Close TensorBoard writer
+writer.close()
 # %% Inference
 transformer.eval()
 
@@ -248,30 +287,6 @@ def translate(eng_sentence, transformer, max_sequence_length, index_to_Future, f
         if next_token == END_TOKEN:
             break
 
-    return kn_sentence[0]
-
-
-def translate_old(eng_sentence):
-    eng_sentence = (eng_sentence,)
-    kn_sentence = ("",)
-    for word_counter in range(max_sequence_length):
-        encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
-            eng_sentence, kn_sentence, max_sequence_length)
-        predictions = transformer(eng_sentence,
-                                  kn_sentence,
-                                  encoder_self_attention_mask.to(device),
-                                  decoder_self_attention_mask.to(device),
-                                  decoder_cross_attention_mask.to(device),
-                                  enc_start_token=False,
-                                  enc_end_token=False,
-                                  dec_start_token=True,
-                                  dec_end_token=False)
-        next_token_prob_distribution = predictions[0][word_counter]
-        next_token_index = torch.argmax(next_token_prob_distribution).item()
-        next_token = index_to_Future[next_token_index]
-        kn_sentence = (kn_sentence[0] + next_token,)
-        if next_token == END_TOKEN:
-            break
     return kn_sentence[0]
 
 #%%
