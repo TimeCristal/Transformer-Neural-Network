@@ -260,8 +260,49 @@ for epoch in range(num_epochs):
 #%%
 transformer.eval()
 
+import torch
 
-def translate(eng_sentence):
+
+def translate(eng_sentence, transformer, max_sequence_length, index_to_Future, Future_to_index, temperature=1.0,
+              top_k=5):
+    eng_sentence = (eng_sentence,)
+    kn_sentence = ("",)
+    for word_counter in range(max_sequence_length):
+        # Create masks for the transformer model
+        encoder_self_attention_mask, decoder_self_attention_mask, decoder_cross_attention_mask = create_masks(
+            eng_sentence, kn_sentence)
+
+        # Get predictions from the transformer model
+        predictions = transformer(eng_sentence,
+                                  kn_sentence,
+                                  encoder_self_attention_mask.to(device),
+                                  decoder_self_attention_mask.to(device),
+                                  decoder_cross_attention_mask.to(device),
+                                  enc_start_token=False,
+                                  enc_end_token=False,
+                                  dec_start_token=True,
+                                  dec_end_token=False)
+
+        # Apply temperature scaling
+        next_token_logits = predictions[0][word_counter] / temperature
+
+        # Apply top-k sampling
+        top_k_logits, top_k_indices = torch.topk(next_token_logits, top_k)
+        top_k_probs = torch.nn.functional.softmax(top_k_logits, dim=-1)
+        next_token_index = torch.multinomial(top_k_probs, 1).item()
+
+        next_token = index_to_Future[top_k_indices[next_token_index].item()]
+
+        # Append the next token to the output sentence
+        kn_sentence = (kn_sentence[0] + next_token,)
+
+        # Check for the end token
+        if next_token == END_TOKEN:
+            break
+
+    return kn_sentence[0]
+
+def translate_old(eng_sentence):
     eng_sentence = (eng_sentence,)
     kn_sentence = ("",)
     for word_counter in range(max_sequence_length):
