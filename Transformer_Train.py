@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ReduceLROnPlateau
 
 from transformer import Transformer  # this is the transformer.py file
 from utils import load_checkpoint, TextDataset, create_masks, save_checkpoint, is_valid_length, is_valid_tokens
@@ -166,6 +166,7 @@ final_lr = 1e-6
 optim = torch.optim.Adam(transformer.parameters(), lr=initial_lr)
 # first restart after 5 epoch. Second after 10. Third after 20.
 scheduler = CosineAnnealingWarmRestarts(optim, T_0=5, T_mult=2, eta_min=final_lr)
+# scheduler = ReduceLROnPlateau(optimizer=optim,)
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 # %%
