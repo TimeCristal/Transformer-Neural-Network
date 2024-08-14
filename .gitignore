@@ -1,3 +1,5 @@
 .idea/
 *.pyc
 .DS_Store
+dataset/english.txt
+dataset/kannada.txt
