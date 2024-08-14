@@ -72,6 +72,7 @@ Present_sentences = [Present_sentences[i] for i in valid_sentence_indicies]
 #%%
 Future_sentences[:3]
 # %%
+save_every_n_epochs = 100
 num_epochs = 1000
 
 d_model = 512 * 2
@@ -203,8 +204,9 @@ for epoch in range(num_epochs):
 
             print(f"Evaluation translation (405 763543) : {kn_sentence}")
             print("-------------------------------------------")
-    # Save a checkpoint at the end of each epoch
-    save_checkpoint(transformer, optim, epoch, epoch_loss / len(train_loader), checkpoint_dir)
+    # Save a checkpoint at every N epochs
+    if epoch % save_every_n_epochs == 0:
+        save_checkpoint(transformer, optim, epoch, epoch_loss / len(train_loader), checkpoint_dir)
 # %% Inference
 transformer.eval()
 
