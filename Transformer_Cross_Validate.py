@@ -12,7 +12,7 @@ from torch import nn
 writer = SummaryWriter(log_dir="runs/transformer_experiment")
 
 # Define a directory to save the checkpoints
-checkpoint_dir = "checkpoints"
+checkpoint_dir = "D:\\checkpoints"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -52,9 +52,9 @@ Future_sentences = [sentence.rstrip('\n') for sentence in Future_sentences]
 k_folds = 5
 #========================
 # Transformer params
-checkPoint_id = 400
-save_every_n_epochs = 100
-num_epochs = 1000
+# checkPoint_id = 400
+save_every_n_epochs = 20
+num_epochs = 100
 
 d_model = 512 * 2
 batch_size = 30
