@@ -3,5 +3,7 @@
 .DS_Store
 dataset/english.txt
 dataset/kannada.txt
+dataset/
 checkpoints/
 runs
+*.pt
