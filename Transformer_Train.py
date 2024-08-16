@@ -12,6 +12,8 @@ from transformer import Transformer  # this is the transformer.py file
 from utils import load_checkpoint, TextDataset, create_masks, save_checkpoint, is_valid_length, is_valid_tokens
 from torch.utils.tensorboard import SummaryWriter
 
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
 # Initialize TensorBoard writer
 writer = SummaryWriter(log_dir="runs/transformer_experiment")
 
@@ -20,8 +22,8 @@ checkpoint_dir = "checkpoints"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 #%%
-Present_file = 'dataset/Present.txt'
-Future_file = 'dataset/Future.txt'
+Present_file = 'dataset/Present_large.txt'
+Future_file = 'dataset/Future_large.txt'
 
 # Generated this by filtering Appendix code
 
@@ -61,7 +63,7 @@ print(f"{PERCENTILE}th percentile length Future: {np.percentile([len(x) for x in
 print(f"{PERCENTILE}th percentile length Present: {np.percentile([len(x) for x in Present_sentences], PERCENTILE)}")
 
 #%%
-max_sequence_length = 40
+max_sequence_length = 60
 
 valid_sentence_indicies = []
 for index in range(len(Future_sentences)):
@@ -89,7 +91,7 @@ ffn_hidden = 2048
 num_heads = 8
 drop_prob = 0.1
 num_layers = 4
-max_sequence_length = 40
+max_sequence_length = 66
 kn_vocab_size = len(Future_vocabulary)
 
 transformer = Transformer(d_model,
@@ -105,7 +107,7 @@ transformer = Transformer(d_model,
                           END_TOKEN,
                           PADDING_TOKEN)
 #%%
-transformer
+# print(transformer)
 
 #%%
 dataset = TextDataset(Present_sentences, Future_sentences)
@@ -168,7 +170,7 @@ optim = torch.optim.Adam(transformer.parameters(), lr=initial_lr)
 scheduler = CosineAnnealingWarmRestarts(optim, T_0=5, T_mult=2, eta_min=final_lr)
 # scheduler = ReduceLROnPlateau(optimizer=optim,)
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
 # %%
 transformer.train()
 transformer.to(device)
@@ -229,10 +231,11 @@ for epoch in range(start_epoch, num_epochs):
             transformer.eval()
             # kn_sentence = ("",)
             # eng_sentence = ("should we go to the mall?",)#405 763543
-            eng_sentence = "405 763543"  #("405 763543",)
+            eng_sentence = "59423545 6 9 9 9"  #("405 763543",)
             kn_sentence = translate_old(eng_sentence)
 
-            print(f"Evaluation translation (405 763543) : {kn_sentence}")
+            print(f"Evaluation translation (59423545 6 9 9 9) : {kn_sentence}")
+            print("Expected Translation: 53355 45 3 3 3 3")
             print("-------------------------------------------")
     # Log average loss per epoch
     writer.add_scalar('Loss/Epoch', epoch_loss / len(train_loader), epoch)
@@ -241,6 +244,7 @@ for epoch in range(start_epoch, num_epochs):
     # print("last learning rate :", scheduler.get_last_lr())
     # writer.add_scalar('LRate/Epoch', scheduler.get_last_lr()[0], epoch)
     # Save a checkpoint at every N epochs
+
     if epoch % save_every_n_epochs == 0 and epoch != start_epoch:
         save_checkpoint(transformer, optim, epoch, epoch_loss / len(train_loader), checkpoint_dir,
                         filename="checkpoint" + str(epoch) + ".pth")
