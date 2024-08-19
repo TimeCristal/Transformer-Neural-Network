@@ -4,6 +4,8 @@
 dataset/english.txt
 dataset/kannada.txt
 dataset/
+#dataset/
 checkpoints/
 runs
 *.pt
+.ipynb_checkpoints
