@@ -86,11 +86,11 @@ save_every_n_epochs = 100
 num_epochs = 1000
 
 d_model = 512 * 2
-batch_size = 30
+batch_size = 30*2
 ffn_hidden = 2048
 num_heads = 8
 drop_prob = 0.1
-num_layers = 4
+num_layers = 1#4
 max_sequence_length = 66
 kn_vocab_size = len(Future_vocabulary)
 
@@ -215,9 +215,9 @@ for epoch in range(start_epoch, num_epochs):
         # train_losses.append(loss.item())
         sample_idx = np.random.randint(0, batch_size - 1)
         # Log loss to TensorBoard
-        writer.add_scalar('Loss/Train', loss.item(), epoch * len(train_loader) + batch_num)
+        # writer.add_scalar('Loss/Train', loss.item(), epoch * len(train_loader) + batch_num)
         if batch_num % 100 == 0:
-            print(f"Iteration {batch_num} : {loss.item()}")
+            print(f"Epoch {epoch} Iteration {batch_num} : {loss.item()}")
             print(f"Present: {eng_batch[sample_idx]}")
             print(f"Future Translation: {kn_batch[sample_idx]}")
             kn_sentence_predicted = torch.argmax(kn_predictions[sample_idx], axis=1)
@@ -231,18 +231,18 @@ for epoch in range(start_epoch, num_epochs):
             transformer.eval()
             # kn_sentence = ("",)
             # eng_sentence = ("should we go to the mall?",)#405 763543
-            eng_sentence = "59423545 6 9 9 9"  #("405 763543",)
+            eng_sentence = "5 94 4235456 5655 3 94 4 94 4"  #("405 763543",)
             kn_sentence = translate_old(eng_sentence)
 
-            print(f"Evaluation translation (59423545 6 9 9 9) : {kn_sentence}")
-            print("Expected Translation: 53355 45 3 3 3 3")
+            print(f"Evaluation translation (5 94 4235456 5655 3 94 4 94 4) : {kn_sentence}")
+            print("Expected Translation: 264 44475454 45492 47 444 44475454 4 6")
             print("-------------------------------------------")
     # Log average loss per epoch
     writer.add_scalar('Loss/Epoch', epoch_loss / len(train_loader), epoch)
     # update LR
-    # scheduler.step()
+    scheduler.step()
     # print("last learning rate :", scheduler.get_last_lr())
-    # writer.add_scalar('LRate/Epoch', scheduler.get_last_lr()[0], epoch)
+    writer.add_scalar('LRate/Epoch', scheduler.get_last_lr()[0], epoch)
     # Save a checkpoint at every N epochs
 
     if epoch % save_every_n_epochs == 0 and epoch != start_epoch:
