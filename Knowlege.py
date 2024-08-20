@@ -9,7 +9,7 @@ import numpy as np
 df = pd.read_csv("dataset/EURUSD_Daily_200005300000_202405300000.csv", delimiter="\t")
 
 # Extract the closing prices from the DataFrame
-closing = df["<CLOSE>"]
+closing = df["<CLOSE>"].iloc[0:500]
 
 
 def generate_triangle_wave_data(n_points=5000, amplitude=1.0, period=5):
@@ -215,8 +215,15 @@ def visibility_condition(prices, i, j):
     return True
 
 
+def min_max_loss(_max, value):
+    return (_max - value) / _max if _max != 0 else 0
+
+
 # Training loop
 epochs = 100
+max_link_loss = torch.tensor(1.0, device=device)
+max_vis_loss = torch.tensor(1.0, device=device)
+
 for epoch in range(epochs):
     model.train()
     total_loss = 0
@@ -250,17 +257,29 @@ for epoch in range(epochs):
         # Total loss with dynamic weighting of KL loss
         vis_loss_weight = 0.5  # Smaller weight for visibility loss
         kl_weight = 1 / (1 + epoch)  # Decrease the influence of KL loss over time
-        #loss = (link_loss + kl_weight * kl_loss + vis_loss_weight * vis_loss).to(device)
-        loss = (link_loss + (epoch + 1) / torch.sqrt(kl_loss) + vis_loss_weight * vis_loss).to(device)
 
-        loss.backward()
-        optimizer.step()
+        if epoch == 0:
+            max_link_loss = torch.max(max_link_loss, link_loss)
+            max_vis_loss = torch.max(max_vis_loss, vis_loss)
+            normalized_link_loss = max_link_loss
+            normalized_vis_loss = max_vis_loss
+        else:
+            # Normalize the losses using the max values from epoch 0
+            normalized_link_loss = min_max_loss(max_link_loss, link_loss)
+            normalized_vis_loss = min_max_loss(max_vis_loss, vis_loss)
 
-        total_loss += loss.item()
-        total_vis_loss += vis_loss.item()  # Ensure to use .item() for scalar values
-        total_link_loss += link_loss.item()
-        #total_kl_loss += (kl_weight * kl_loss).item()
-        total_kl_loss += ((epoch + 1) / torch.sqrt(kl_loss)).item()
+            # Total loss with dynamic weighting of KL loss
+            vis_loss_weight = 0.5  # Smaller weight for visibility loss
+            kl_weight = 1 / (1 + epoch)  # Decrease the influence of KL loss over time
+            loss = (normalized_link_loss + kl_weight * kl_loss + vis_loss_weight * normalized_vis_loss).to(device)
+
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            total_vis_loss += normalized_vis_loss.item()
+            total_link_loss += normalized_link_loss.item()
+            total_kl_loss += (kl_weight * kl_loss).item()
 
     scheduler.step()
     print(
