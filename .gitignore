@@ -9,3 +9,5 @@ checkpoints/
 runs
 *.pt
 .ipynb_checkpoints
+*.npy
+*.csv
