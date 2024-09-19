@@ -3,12 +3,20 @@ import pandas as pd
 import numpy as np
 
 
-def load_fx(data_start=0,data_end=5000, window_size = 10, shift=2):
+def load_fx(data_start=0,data_end=5000, window_size = 10, shift=2, pair='EURUSD'):
     # Load the dataset
     # df = pd.read_csv("dataset/EURUSD_Daily_200005300000_202405300000.csv", delimiter="\t")
-    df = pd.read_csv(
-        "/Users/krasimirtrifonov/Documents/GitHub/Transformer-Neural-Network/dataset/EURUSD_Daily_200005300000_202405300000.csv",
-        delimiter="\t")
+    path = '/Users/krasimirtrifonov/Documents/GitHub/VisibilityGraph/data/forex/all'
+    if pair == 'EURUSD':
+        fn = 'EURUSD_Daily_200005300000_202405300000.csv'
+    if pair == 'AUDUSD':
+        fn = 'AUDUSD_Daily_200005300000_202405300000.csv'
+    if pair == 'GBPUSD':
+        fn = 'GBPUSD_Daily_200005300000_202405300000.csv'
+    df = pd.read_csv(f'{path}/{fn}',delimiter="\t")
+    # df = pd.read_csv(
+    #     "/Users/krasimirtrifonov/Documents/GitHub/Transformer-Neural-Network/dataset/EURUSD_Daily_200005300000_202405300000.csv",
+    #     delimiter="\t")
 
     # Extract the closing prices
     closing = df["<CLOSE>"].iloc[data_start:data_end]
@@ -18,6 +26,7 @@ def load_fx(data_start=0,data_end=5000, window_size = 10, shift=2):
     # test_size = 0.2   # Test set size
 
     scaler = StandardScaler()
+
     # X_train = scaler.fit_transform(X_train)
 
     # print(f"shift {shift}")
