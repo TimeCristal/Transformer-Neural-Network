@@ -1,5 +1,25 @@
 import torch
 import torch.nn as nn
+from enum import Enum
+import random
+import numpy as np
+def set_seed(seed):
+    """
+    Set seeds for reproducibility.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+
 
 # Encoder network
 class Encoder(nn.Module):
@@ -39,14 +59,23 @@ class Classifier(nn.Module):
         h = torch.relu(self.fc2(h))
         return self.fc3(h)  # No softmax, CrossEntropyLoss applies it
 
+
+class LossType(Enum):
+    Total = 0
+    Classifier = 1
+    Reconstruction = 2
+    KL = 3
+    ClassifierReconstruction = 4
+
 class DichotomyVAE(nn.Module):
-    def __init__(self, input_dim, output_dim, latent_dim, num_classes, loss_total=False, verbose=False):
+    def __init__(self, input_dim, output_dim, latent_dim, num_classes, loss_type = LossType.Classifier, verbose=False):
         super(DichotomyVAE, self).__init__()
+        set_seed(42) # For Reproducibility
         self.encoder = Encoder(input_dim, latent_dim)
         self.decoder = Decoder(latent_dim, output_dim)
         self.classifier = Classifier(latent_dim, num_classes)
         self.verbose = verbose
-        self.loss_total = loss_total
+        self.loss_type = loss_type
         self.is_fitted = False  # A flag to track whether the model is trained
 
         # Automatically set the device based on availability (CUDA, MPS, or CPU)
@@ -54,10 +83,11 @@ class DichotomyVAE(nn.Module):
             self.device = torch.device("cuda")
             if self.verbose:
                 print("Using CUDA for GPU acceleration")
-        elif torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-            if self.verbose:
-                print("Using MPS (Apple Silicon) for GPU acceleration")
+        # MPS is too slow
+        # elif torch.backends.mps.is_available():
+        #     self.device = torch.device("mps")
+        #     if self.verbose:
+        #         print("Using MPS (Apple Silicon) for GPU acceleration")
         else:
             self.device = torch.device("cpu")
             if self.verbose:
@@ -96,8 +126,16 @@ class DichotomyVAE(nn.Module):
                 total_loss, recon_loss, kl_loss, class_loss, kl_reverse = self.loss_function(
                     x_recon, x, z_mean, z_logvar, y_pred, y, beta, lambda_class)
 
-                if self.loss_total:
+                if self.loss_type == LossType.Total:
                     loss = total_loss
+                elif self.loss_type == LossType.Classifier:
+                    loss = class_loss + 1/kl_loss/1000/(epoch+1)
+                elif self.loss_type == LossType.Reconstruction:
+                    loss = recon_loss
+                elif self.loss_type == LossType.KL:
+                    loss = kl_loss
+                elif self.loss_type == LossType.ClassifierReconstruction:
+                    loss = class_loss + recon_loss
                 else:
                     loss = class_loss  # Modify if you want to use total_loss
 
@@ -107,7 +145,7 @@ class DichotomyVAE(nn.Module):
 
             if epoch % 100 == 0 and self.verbose:
                 print(
-                    f'Epoch {epoch + 1}, kl: {kl_loss:.4f}, class: {class_loss:.4f}, lr: {scheduler.get_last_lr()[0]:.6f}')
+                    f'Epoch {epoch:10}, kl: {kl_loss:.4f}, class: {class_loss:.4f}, lr: {scheduler.get_last_lr()[0]:.6f}')
             scheduler.step()
 
         self.is_fitted = True  # Mark the model as fitted

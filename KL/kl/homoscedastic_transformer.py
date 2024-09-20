@@ -1,57 +1,39 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from statsmodels.stats.diagnostic import het_arch
-from statsmodels.tsa.stattools import adfuller
 from sklearn.preprocessing import StandardScaler
+from statsmodels.tsa.stattools import adfuller
+import random
+
+def set_seed(seed):
+    """
+    Set seeds for reproducibility.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 
 
 class HomoscedasticTransformer(nn.Module):
     """
-    Perform Homoscedastic Transformation
-
-    This function applies a homoscedastic transformation to the input data by fitting the model
-    and ensuring that key statistical properties (e.g., stationarity and homoscedasticity) are satisfied.
-
-    ## Requirements:
-    1. **Stationarity**: The input data should be stationary. This is verified using the Augmented Dickey-Fuller (ADF) test.
-       - If any feature is found to be non-stationary (p-value > 0.05), an error is raised, and the process is halted.
-
-    2. **Homoscedasticity**: The data is expected to have a constant variance (homoscedasticity), verified through the ARCH test.
-       - If heteroscedasticity is detected (p-value between 0.01 and 0.05), a warning is raised, suggesting an increase in the number of training epochs for better convergence.
-
-    ## Checks:
-    - **Standardization**: The input data should have a mean close to 0 and a standard deviation close to 1.
-      - Tolerances for the checks:
-        - Mean: ±1e-2
-        - Standard Deviation: ±1e-2
-      - If the data fails these checks, the user is notified, and standardization should be applied before proceeding.
-
-    - **Stationarity Check**: The ADF test is applied to each feature of the data.
-      - A p-value threshold of 0.05 is used to determine stationarity.
-      - If the p-value is greater than 0.05, the feature is considered non-stationary.
-
-    - **Homoscedasticity Check**: The ARCH test is applied to ensure constant variance across the data.
-      - If the p-value is between 0.01 and 0.05, a warning is issued.
-      - If the p-value is less than 0.01, it indicates severe heteroscedasticity, but the process will still proceed with a warning.
-
-    ## Possible Errors:
-    - **ValueError**: Raised when the input data is found to be non-stationary. This error prevents the model from proceeding since stationarity is a critical requirement.
-
-    ## Possible Warnings:
-    - **Warning**: Raised when the data is found to be heteroscedastic (non-constant variance) based on the ARCH test.
-      - The process can still proceed, but convergence issues may occur.
-      - The user is advised to consider increasing the number of epochs or modifying other model parameters to mitigate this issue.
-
-    ## Authors:
-    - Krasimir Trifonov
-    - ChatGPT 4o
+    Perform Homoscedastic Transformation with StandardScaler normalization for input and output.
     """
+
     def __init__(self, input_size, hidden_size, latent_size, verbose=False):
         super(HomoscedasticTransformer, self).__init__()
-        self.scaler = StandardScaler()  # Scaler for normalizing output data
-
+        set_seed(42) # For Reproducibility
+        self.scaler = StandardScaler()  # Scaler for normalizing input and output data
         self.verbose = verbose
+
         # Encoder
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc_mu = nn.Linear(hidden_size, latent_size)  # Mean of latent space
@@ -70,13 +52,9 @@ class HomoscedasticTransformer(nn.Module):
         logvar = self.fc_logvar(h)
         return mu, logvar
 
-    # def decode(self, z):
-    #     h = torch.relu(self.fc3(z))
-    #     return torch.sigmoid(self.fc4(h))
-
     def decode(self, z):
         h = torch.relu(self.fc3(z))
-        return self.fc4(h)  # Remove sigmoid to avoid range compression
+        return self.fc4(h)  # No sigmoid to avoid range compression
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -90,14 +68,10 @@ class HomoscedasticTransformer(nn.Module):
 
     def run_tests(self, X):
         """
-        This function runs the ADF test and other future tests you may want to add.
+        This function runs the ADF test and standardization checks on the input data.
         """
-        # Convert tensor to numpy array
-        # X_np = X.cpu().numpy()# Converted to numpy by Standard Scaler
-        X_np = X
-
         # Perform ADF Test
-        adf_results = self.adf_test(X_np)
+        adf_results = self.adf_test(X)
         for i, p_value in enumerate(adf_results):
             if p_value > 0.05:
                 if self.verbose:
@@ -108,11 +82,9 @@ class HomoscedasticTransformer(nn.Module):
                     print(f'Feature {i}: Stationary (p-value = {p_value:.4f})')
 
         # Standardization test
-        check_standardization_result = self.check_standardization(X_np)
+        check_standardization_result = self.check_standardization(X)
         if not check_standardization_result:
             raise Warning("Data is NOT standardized!")
-        # Placeholder for future tests
-        # You can add other statistical tests here in the future
 
     def adf_test(self, X):
         """
@@ -127,11 +99,6 @@ class HomoscedasticTransformer(nn.Module):
     def check_standardization(self, X, mean_tolerance=1e-2, std_tolerance=1e-2):
         """
         Checks if the data is standardized within a given tolerance.
-        - X: Data (numpy array).
-        - mean_tolerance: Maximum allowed deviation from 0 for the mean.
-        - std_tolerance: Maximum allowed deviation from 1 for the standard deviation.
-
-        Returns True if the data is sufficiently standardized, else False.
         """
         mean = np.mean(X)
         std = np.std(X)
@@ -151,10 +118,21 @@ class HomoscedasticTransformer(nn.Module):
             return False
 
     def fit(self, X, epochs=100, lr=0.001):
-        # Optional: If you want to standardize input data one more time
-        X_scaled = self.scaler.fit_transform(X)
+        """
+        Fit the model on the standardized input data.
+        """
+        # Convert tensor to numpy for StandardScaler
+        if isinstance(X, torch.Tensor):
+            X_np = X.cpu().numpy()
+
+        # Standardize the input data
+        X_scaled_np = self.scaler.fit_transform(X_np)
+
+        # Convert back to tensor after scaling
+        X_scaled = torch.tensor(X_scaled_np, dtype=torch.float32)
+
         # Run the ADF test and other tests before fitting
-        self.run_tests(X_scaled)
+        self.run_tests(X_scaled_np)
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
@@ -174,54 +152,44 @@ class HomoscedasticTransformer(nn.Module):
         self.is_fitted = True  # Mark the model as fitted
 
     def transform(self, X):
+        """
+        Transform the input data using the fitted model and return normalized reconstructed data.
+        """
         if not self.is_fitted:
             raise RuntimeError("HomoscedasticTransformer is not fitted yet. Call `fit` first.")
 
-        X_scaled = self.scaler.transform(X)  # Optional: Standardize input if needed
+        # Convert input tensor to numpy for StandardScaler
+        if isinstance(X, torch.Tensor):
+            X_np = X.cpu().numpy()
+
+        # Standardize input data
+        X_scaled_np = self.scaler.transform(X_np)
+        X_scaled = torch.tensor(X_scaled_np, dtype=torch.float32)  # Convert back to tensor
 
         self.eval()
         with torch.no_grad():
             reconstructed_data, _, _ = self(X_scaled)
-            # Convert reconstructed data to numpy array for testing
+
+        # Convert reconstructed data to numpy
         reconstructed_data_np = reconstructed_data.cpu().numpy()
 
-        # ARCH test: run on each feature dimension independently (assuming multivariate data)
-        arch_test_resid = het_arch(reconstructed_data_np[:,0])
-        p_value = arch_test_resid[1]
-        # Check p-values for heteroscedasticity (p > 0.05 means no heteroscedasticity)
-
-        if p_value < 0.05 and p_value > 0.01:
-            raise Warning(f'Homoscedasticity is not achieved!, (p-value = {p_value:.4f}), try to increase number of epochs.')
-
-            # Now normalize the output (reconstructed data)
+        # Normalize the output (reconstructed data)
         reconstructed_data_normalized = self.scaler.fit_transform(reconstructed_data_np)
 
-        # Return reconstructed data and a list of p-values from the ARCH test
-        return reconstructed_data_normalized, p_value
+        return reconstructed_data_normalized
 
     def fit_transform(self, X, epochs=100, lr=0.001):
-        # Combines fit and transform
+        """
+        Fit the model and transform the input data, returning normalized reconstructed data.
+        """
         self.fit(X, epochs=epochs, lr=lr)
         return self.transform(X)
 
     @staticmethod
     def vae_loss(recon_x, x, mu, logvar):
+        """
+        Compute the loss function for the VAE.
+        """
         recon_loss = nn.MSELoss()(recon_x, x)  # Reconstruction loss
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())  # KL divergence
         return recon_loss + kl_loss
-
-
-# # Example usage:
-# input_size = 20  # Example input size
-# hidden_size = 50
-# latent_size = 10
-# X = torch.randn((100, input_size))  # Example data
-#
-# vae_model = HomoscedasticTransformer(input_size, hidden_size, latent_size)
-#
-# # Fit the model and transform data
-# vae_model.fit(X, epochs=50)
-# reconstructed_data = vae_model.transform(X)
-#
-# # Or, do both fit and transform in one step
-# reconstructed_data = vae_model.fit_transform(X, epochs=50)
