@@ -1,9 +1,9 @@
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-from arch import arch_model
 from statsmodels.stats.diagnostic import het_arch
 from statsmodels.tsa.stattools import adfuller
+from sklearn.preprocessing import StandardScaler
 
 
 class HomoscedasticTransformer(nn.Module):
@@ -49,6 +49,7 @@ class HomoscedasticTransformer(nn.Module):
     """
     def __init__(self, input_size, hidden_size, latent_size, verbose=False):
         super(HomoscedasticTransformer, self).__init__()
+        self.scaler = StandardScaler()  # Scaler for normalizing output data
 
         self.verbose = verbose
         # Encoder
@@ -92,7 +93,8 @@ class HomoscedasticTransformer(nn.Module):
         This function runs the ADF test and other future tests you may want to add.
         """
         # Convert tensor to numpy array
-        X_np = X.cpu().numpy()
+        # X_np = X.cpu().numpy()# Converted to numpy by Standard Scaler
+        X_np = X
 
         # Perform ADF Test
         adf_results = self.adf_test(X_np)
@@ -149,16 +151,18 @@ class HomoscedasticTransformer(nn.Module):
             return False
 
     def fit(self, X, epochs=100, lr=0.001):
+        # Optional: If you want to standardize input data one more time
+        X_scaled = self.scaler.fit_transform(X)
         # Run the ADF test and other tests before fitting
-        self.run_tests(X)
+        self.run_tests(X_scaled)
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
         # Training loop
         for epoch in range(epochs):
             self.train()
-            recon_x, mu, logvar = self(X)
-            loss = self.vae_loss(recon_x, X, mu, logvar)
+            recon_x, mu, logvar = self(X_scaled)
+            loss = self.vae_loss(recon_x, X_scaled, mu, logvar)
 
             optimizer.zero_grad()
             loss.backward()
@@ -173,9 +177,11 @@ class HomoscedasticTransformer(nn.Module):
         if not self.is_fitted:
             raise RuntimeError("HomoscedasticTransformer is not fitted yet. Call `fit` first.")
 
+        X_scaled = self.scaler.transform(X)  # Optional: Standardize input if needed
+
         self.eval()
         with torch.no_grad():
-            reconstructed_data, _, _ = self(X)
+            reconstructed_data, _, _ = self(X_scaled)
             # Convert reconstructed data to numpy array for testing
         reconstructed_data_np = reconstructed_data.cpu().numpy()
 
@@ -187,8 +193,11 @@ class HomoscedasticTransformer(nn.Module):
         if p_value < 0.05 and p_value > 0.01:
             raise Warning(f'Homoscedasticity is not achieved!, (p-value = {p_value:.4f}), try to increase number of epochs.')
 
+            # Now normalize the output (reconstructed data)
+        reconstructed_data_normalized = self.scaler.fit_transform(reconstructed_data_np)
+
         # Return reconstructed data and a list of p-values from the ARCH test
-        return reconstructed_data, p_value
+        return reconstructed_data_normalized, p_value
 
     def fit_transform(self, X, epochs=100, lr=0.001):
         # Combines fit and transform
