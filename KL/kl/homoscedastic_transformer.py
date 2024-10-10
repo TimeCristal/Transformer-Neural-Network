@@ -56,11 +56,21 @@ class HomoscedasticTransformer(nn.Module):
         h = torch.relu(self.fc3(z))
         return self.fc4(h)  # No sigmoid to avoid range compression
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std  # Sample from latent space
+    # def reparameterize(self, mu, logvar):
+    #     std = torch.exp(0.5 * logvar)
+    #     eps = torch.randn_like(std)
+    #     return mu + eps * std  # Sample from latent space
 
+    def reparameterize(self, mu, logvar, deterministic=False):
+        if deterministic:
+            # Skip adding random noise, use the mean directly
+            return mu
+        else:
+            std = torch.exp(0.5 * logvar)
+            # Explicitly set the seed before generating noise
+            set_seed(42)
+            eps = torch.randn_like(std)
+            return mu + eps * std
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
@@ -168,7 +178,11 @@ class HomoscedasticTransformer(nn.Module):
 
         self.eval()
         with torch.no_grad():
-            reconstructed_data, _, _ = self(X_scaled)
+            # reconstructed_data, _, _ = self(X_scaled)
+            mu, logvar = self. encode(X_scaled)
+            # Use deterministic=True to avoid randomness in the transform phase
+            latent = self.reparameterize(mu, logvar, deterministic=False)
+            reconstructed_data = self.decode(latent)
 
         # Convert reconstructed data to numpy
         reconstructed_data_np = reconstructed_data.cpu().numpy()

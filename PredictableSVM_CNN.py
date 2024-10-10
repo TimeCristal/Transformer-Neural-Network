@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pyts.image import GramianAngularField
+from pyts.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -20,28 +21,55 @@ import copy
 #%%
 
 # Load the dataset
-df = pd.read_csv("dataset/EURUSDH4.csv", delimiter="\t")
+df = pd.read_csv("dataset/EURUSD_Daily_200005300000_202405300000.csv", delimiter="\t")
 
 # Extract the closing prices
-closing = df["<CLOSE>"]
+closing = df["<HIGH>"]
 
 # Parameters
-window_size = 20  # Example window size
-test_size = 0.2   # Test set size
+window_size = 29  # Example window size
+test_size = 0.2  # Test set size
 
 
 scaler = StandardScaler()
+# scaler = MinMaxScaler()
+# x = scaler.fit_transform(x)
+def min_max_scale(data, feature_range=(-1, 1)):
+    """
+    Scales the input data to the specified feature range.
 
+    Parameters:
+    - data: numpy array, the data to be scaled
+    - feature_range: tuple, the desired range of the transformed data (default is (-1, 1))
+
+    Returns:
+    - scaled_data: numpy array, the data scaled to the specified range
+    """
+    data_min = np.min(data, axis=0)
+    data_max = np.max(data, axis=0)
+
+    # Scale data to [0, 1]
+    data_scaled = (data - data_min) / (data_max - data_min)
+
+    # Scale data to [feature_range[0], feature_range[1]]
+    scale = feature_range[1] - feature_range[0]
+    scaled_data = data_scaled * scale + feature_range[0]
+
+    return scaled_data
+#%%
 # Create sliding window features and labels
 X, y = [], []
 for i in range(len(closing) - window_size):
     window = closing[i:i + window_size].values
-    target = 1 if closing[i + window_size] > closing[i + window_size - 3] else 0 # Yesterday to Tomorrow
+    end = window_size - 1
+    target = 1 if window[end] > window[end - 2] else 0  # Yesterday to Tomorrow
     # Standardize the data
-    features = scaler.fit_transform(window[:-1].reshape(-1, 1))
+    f = window[:-1].reshape(-1, 1)
+    # features1 = scaler.fit_transform(f)
+    features = min_max_scale(f, feature_range=(-3, 3))
+    # features_std = scaler.fit_transform(features)
     X.append(features)
     y.append(target)
-
 
 X = np.array(X).squeeze()
 y = np.array(y)
@@ -55,7 +83,6 @@ X_train_valid, X_test, y_train_valid, y_test = train_test_split(X, y, test_size=
 # X_train, X_valid, y_train, y_valid = train_test_split(X_train_valid, y[:len(X_train_valid)], test_size=(1 - train_size), shuffle=True, random_state=42)
 
 
-
 # Train the SVM model first time on train set only
 # svm_model = SVC(kernel='rbf', C=1.0, gamma='scale')
 # svm_model = SVC()
@@ -67,9 +94,8 @@ X_train_valid, X_test, y_train_valid, y_test = train_test_split(X, y, test_size=
 #
 # # Now, we generate GAF images for the test set using pyts
 feature_window_size = window_size - 1
-gaf = GramianAngularField(image_size=feature_window_size, method='summation')
+gaf = GramianAngularField(image_size=feature_window_size)
 X_test_gaf = gaf.fit_transform(X_train_valid)
-
 
 # Directory to be removed and recreated
 dir_path = 'gaf_images'
@@ -83,10 +109,83 @@ if os.path.exists(dir_path):
 os.makedirs(dir_path, exist_ok=True)
 
 for idx, (image, label) in enumerate(zip(X_test_gaf, y_train_valid)):
-    class_label = "up" if y_train_valid[idx]==0 else "down"
+    class_label = "up" if y_train_valid[idx] == 1 else "down"
     np.save(f'gaf_images/{class_label}_{idx}.npy', image)
 
+
 # GAF images are now saved, and the next step will be CNN training.
+#%%
+class GAFEncoder(torch.nn.Module):
+    def __init__(self, image_wide=28):
+        super(GAFEncoder, self).__init__()
+        self.image_wide = image_wide
+        # Building an linear encoder with Linear
+        # layer followed by Relu activation function
+        self.encoder = nn.Sequential(
+            nn.Linear(image_wide * image_wide, 512),  # Increased to 512
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, 256),  # Increased to 256
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 32),  # More complex bottleneck
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(32, 16),  # More complex bottleneck
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(16, 8)  # More complex bottleneck
+        )
+
+        # Building an linear decoder with Linear
+        # layer followed by Relu activation function
+        # The Sigmoid activation function
+        # outputs the value between 0 and 1
+        # 9 ==> 784
+        self.decoder = torch.nn.Sequential(
+            torch.nn.Linear(8, 16),
+            nn.BatchNorm1d(16),
+            torch.nn.ReLU(),
+            torch.nn.Linear(16, 32),
+            nn.BatchNorm1d(32),
+            torch.nn.ReLU(),
+            torch.nn.Linear(32, 64),
+            nn.BatchNorm1d(64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 512),
+            nn.BatchNorm1d(512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, image_wide * image_wide),
+            torch.nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # Flatten the input if necessary
+        x = x.view(x.size(0), -1)  # Automatically flatten (batch_size, 28*28)
+
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return encoded, decoded.view(x.size(0), 1, self.image_wide,
+                                     self.image_wide)  # Reshape back to (batch_size, 1, 28, 28)
+
 
 #%%
 class GAFClassifierCNN(nn.Module):
@@ -110,12 +209,13 @@ class GAFClassifierCNN(nn.Module):
         x = self.fc2(x)
         return x
 
+
 #%%
 class GAFDataset(Dataset):
     def __init__(self, image_dir, flip_prob=0.0):
         self.image_dir = image_dir
         self.image_files = [f for f in os.listdir(image_dir) if f.endswith('.npy')]
-        self.labels = [0 if 'up' in f else 1 for f in self.image_files]
+        self.labels = [1 if 'up' in f else 0 for f in self.image_files]
         self.images = [np.load(os.path.join(self.image_dir, f)) for f in self.image_files]
         self.flip_prob = flip_prob  # Probability to flip the label
 
@@ -132,10 +232,80 @@ class GAFDataset(Dataset):
 
         return torch.tensor(image, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
 
-
+#%%
 # Prepare the dataset and dataloader
-gaf_dataset = GAFDataset(image_dir='gaf_images', flip_prob=0.14)# 10% chance to flip the label
+gaf_dataset = GAFDataset(image_dir='gaf_images', flip_prob=0.15)  # 10% chance to flip the label
 train_loader = DataLoader(gaf_dataset, batch_size=32, shuffle=True)
+#%%
+
+# Instantiate the model, loss function, and optimizer
+autoencoder = GAFEncoder(image_wide=feature_window_size)
+criterion = nn.MSELoss()  # Mean Squared Error for reconstruction
+optimizer = optim.Adam(autoencoder.parameters(), lr=0.00001)
+# Add ReduceLROnPlateau scheduler
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+
+# Train the Autoencoder
+num_epochs = 200
+for epoch in range(num_epochs):
+    for images, _ in train_loader:  # We don't need labels here
+        optimizer.zero_grad()
+
+        # Reshape the entire batch of images
+        # images = images.view(-1, feature_window_size * feature_window_size)  # Flatten the batch of images
+        encoded, decoded = autoencoder(images)  # Pass the batch through the autoencoder
+        loss = criterion(decoded, images)  # Compute the loss for the entire batch
+
+        loss.backward()  # Backpropagate the loss
+        optimizer.step()  # Update the weights
+
+    # print(f'Epoch {epoch + 1}, Loss: {loss.item():.4f}')
+    # Step the scheduler after each epoch
+    scheduler.step(loss.item())  # The scheduler checks the loss and adjusts the learning rate if necessary
+    # Optional: Check learning rate
+    for param_group in optimizer.param_groups:
+        print(f"Epoch {epoch + 1}, Loss: {loss.item():.6f}, Learning Rate: {param_group['lr']}")
+
+    if epoch % 20 == 0:
+        # Convert the encoded output to a NumPy array (optional)
+        encoded_np = encoded.detach().cpu().numpy()
+        # Alternatively, if you want to visualize the encoded representations:
+        import matplotlib.pyplot as plt
+
+        # Assuming encoded is 2D (batch_size, encoding_size)
+        plt.figure(figsize=(10, 5))
+        for i in range(min(5, encoded_np.shape[0])):  # Show up to 5 examples
+            plt.subplot(1, 5, i + 1)
+            plt.imshow(encoded_np[i].reshape(-1, 1), cmap='viridis')
+            plt.title(f"Encoded {i + 1}")
+            plt.axis('off')
+        plt.show()
+print("Finished Training")
+#%%
+from sklearn.metrics import accuracy_score
+
+# Step 1: Extract encoded features
+encoded_features = []
+for images, _ in train_loader:  # Replace with your actual data loader
+    with torch.no_grad():  # Disable gradient calculation
+        encoded, _ = autoencoder(images)  # Only use the encoder part
+        encoded = encoded.cpu().numpy()  # Convert to numpy array
+        encoded_features.append(encoded)
+
+encoded_features = np.vstack(encoded_features)  # Combine all features into one array
+
+# Step 2: Train-test split
+X_train, X_test, y_train, y_test = train_test_split(encoded_features, y_train_valid, test_size=0.2, random_state=42)
+
+# Step 3: Train the Random Forest model
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+
+# Step 4: Make predictions and evaluate
+y_pred = rf_model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Random Forest Accuracy: {accuracy * 100:.2f}%")
+
 
 #%%
 def trainCNN():
@@ -145,7 +315,7 @@ def trainCNN():
     optimizer = optim.Adam(cnn_model.parameters(), lr=0.001)
 
     # Training loop with early stopping
-    num_epochs = 200
+    num_epochs = 20
     patience = 10  # Number of epochs with no improvement after which training will be stopped
     best_accuracy = 0.0
     best_model_wts = copy.deepcopy(cnn_model.state_dict())
@@ -184,7 +354,8 @@ def trainCNN():
             print(f'Early stopping at epoch {epoch + 1}')
             break
 
-        print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}, Accuracy: {accuracy:.2f}%')
+        print(
+            f'Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}, Accuracy: {accuracy:.2f}%')
 
     # Load the best model weights
     cnn_model.load_state_dict(best_model_wts)
@@ -192,6 +363,8 @@ def trainCNN():
     print("CNN training completed.")
     print(f'Best Accuracy: {best_accuracy:.2f}%')
     return cnn_model, best_accuracy
+
+
 #%%
 def predict_cnn(cnn_model, feature_window):
     # No need to scale the feature_window again since it was done during data preparation
@@ -210,15 +383,18 @@ def predict_cnn(cnn_model, feature_window):
         _, cnn_prediction = torch.max(output.data, 1)
 
     return cnn_prediction, output
+
+
 #%%
 # Train 50 models on
-models=[]
-for x in range(0,5):
+models = []
+for x in range(0, 5):
+    print(f"run :{x}")
     cnn_model_, best_accuracy = trainCNN()
-    if best_accuracy > 0.7:
-        models.append(cnn_model_)
+    # if best_accuracy > 0.7:
+    models.append(cnn_model_)
 
-cnn_model = models[0]
+# cnn_model = models[0]
 #%%
 # Evaluate 50 models on test set
 predictions_list = []
@@ -237,7 +413,7 @@ mx_ds.to_csv('predictions.csv', index=False)
 predictions_mx = pd.read_csv('predictions.csv').to_numpy().squeeze().transpose()
 y_test_ds = pd.DataFrame(y_test, columns=['class'])
 y_test_ds.to_csv('y_test.csv')
-true_labels = pd.read_csv('y_test.csv')['class'].to_numpy()#.squeeze().squeeze().squeeze()
+true_labels = pd.read_csv('y_test.csv')['class'].to_numpy()  #.squeeze().squeeze().squeeze()
 #%%
 # Step 1: Calculate Accuracy for Each Model
 individual_accuracies = np.mean(predictions_mx == true_labels[:, None], axis=0)
@@ -371,4 +547,43 @@ print("Class Distribution:", class_distribution)
 print("X_test shape:", X_test.shape)
 print("y_test shape:", y_test.shape)
 #%%
-print("mx shape:", mx.shape)
+# Flip the majority vote predictions
+flipped_majority_vote = np.logical_not(majority_vote).astype(int)
+
+# Calculate the accuracy of the flipped predictions
+flipped_accuracy = np.mean(flipped_majority_vote == true_labels)
+print(f"Flipped Majority Vote Accuracy: {flipped_accuracy:.2f}%")
+
+# Check if the flipping improves the accuracy
+if flipped_accuracy > majority_vote_accuracy:
+    print("Flipping the predictions improves the accuracy.")
+else:
+    print("Flipping the predictions does not improve the accuracy.")
+
+#%%
+# Parameters
+t = np.linspace(0, 2 * np.pi, 100)  # Time variable
+
+# Sine wave 1 with lower frequency
+freq1 = 1
+sine_wave1 = np.sin(freq1 * t)
+
+# Sine wave 2 with higher frequency
+freq2 = 3
+sine_wave2 = np.sin(freq2 * t)
+
+# Sine wave 2 with higher frequency
+freq3 = 4
+sine_wave3 = np.sin(freq3 * t)
+#%%
+import matplotlib.pyplot as plt
+
+pairwise_embedding = np.vstack((sine_wave1, sine_wave2, sine_wave3)).T
+# Plot pairwise embeddings
+plt.figure(figsize=(8, 8))
+plt.plot(pairwise_embedding[:, 0], pairwise_embedding[:, 1], pairwise_embedding[:, 2], 'o-')
+# plt.title('Pairwise Embedding of Two Sine Waves')
+# plt.xlabel('Sine Wave 1 (Amplitude)')
+# plt.ylabel('Sine Wave 2 (Amplitude)')
+# plt.grid(True)
+plt.show()

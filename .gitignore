@@ -4,10 +4,13 @@
 dataset/english.txt
 dataset/kannada.txt
 dataset/
-#dataset/
 checkpoints/
+CVAE/generated_images
+CVAE/data
 runs
 *.pt
 .ipynb_checkpoints
 *.npy
 *.csv
+*.png
+*.gz
